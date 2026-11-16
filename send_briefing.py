@@ -1,4 +1,5 @@
 import os
+import random
 import smtplib
 import json
 import urllib.parse
@@ -185,7 +186,7 @@ def generate_stock_chart_url(market_data):
     return f"https://quickchart.io/chart?w=600&h=260&bkg=white&c={encoded}"
 
 # ==========================================
-# 4. 요일별 맞춤 명언 및 다정한 응원 톡
+# 4. 무작위 명언 및 요일별 다정한 응원 톡
 # ==========================================
 def get_daily_quote_and_cheer(now: datetime):
     quotes = [
@@ -205,7 +206,8 @@ def get_daily_quote_and_cheer(now: datetime):
          "여유로운 일요일 아침이네! 평일 동안 쌓였던 생각과 부담은 오늘만큼은 잠시 내려놓고, 온전히 네가 좋아하는 것들로 채워지는 편안한 쉼이 되었으면 좋겠어. 몸과 마음 든든하게 재충전하자! 🌿")
     ]
     weekday_idx = now.weekday()  # 0: 월요일 ~ 6: 일요일
-    day_name, quote_text, author, cheer_msg = quotes[weekday_idx]
+    _, quote_text, author, _ = random.choice(quotes)
+    cheer_msg = quotes[weekday_idx][3]
     return quote_text, author, cheer_msg
 
 # ==========================================
