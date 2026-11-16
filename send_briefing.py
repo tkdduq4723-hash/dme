@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from html import escape
 
 def load_env(env_path: Path):
     if not env_path.exists():
@@ -188,27 +189,38 @@ def generate_stock_chart_url(market_data):
 # ==========================================
 # 4. 무작위 명언 및 요일별 다정한 응원 톡
 # ==========================================
+def fetch_random_quote():
+    """Fetch the current public Korean quote collection on every run."""
+    base = "https://raw.githubusercontent.com/chkim116/kadvice/master/scripts/fixtures/"
+    quotes = []
+    for filename in ("life_advice.json", "motivation_advice.json", "etc_advice.json"):
+        try:
+            request = urllib.request.Request(base + filename, headers={
+                "User-Agent": "MorningBriefing/1.0", "Cache-Control": "no-cache"
+            })
+            with urllib.request.urlopen(request, timeout=8) as response:
+                data = json.load(response)
+            if not isinstance(data, list):
+                raise ValueError("Expected a quote list")
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                message = item.get("message")
+                author = item.get("author")
+                if isinstance(message, str) and message.strip():
+                    quotes.append((message.strip(), author.strip()
+                                   if isinstance(author, str) and author.strip() else "작자 미상"))
+        except (OSError, ValueError) as error:
+            print(f"[WARN] Quote source unavailable ({filename}): {error}")
+    if not quotes:
+        return "오늘은 명언을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.", "명언 서비스 안내"
+    return random.choice(quotes)
+
+
 def get_daily_quote_and_cheer(now: datetime):
-    quotes = [
-        ("월", "오늘이라는 날은 두 번 다시 찾아오지 않는다.", "단테 알리기에리 (Dante Alighieri)", 
-         "새로운 한 주의 월요일 아침이 활짝 열렸네! 오늘 할 일들이 머릿속에 가득 차 있어도 조급해하지 말고, 일단 따뜻한 모닝커피 한 잔 마시면서 천천히 기지개부터 켜 봐. 네가 편안한 속도로 하나씩 짚어가다 보면 오늘도 분명 만족스러운 하루가 될 거야. 좋은 하루 보내자, 파이팅! ☕"),
-        ("화", "작은 변화가 일어날 때 진정한 삶을 살게 된다.", "레프 톨스토이 (Leo Tolstoy)",
-         "화요일 아침이야! 어제 월요일의 분주함은 잘 넘겼지? 오늘 하루는 어제보다 한결 여유로운 마음으로 하나씩 차근차근 풀어가 보자. 넌 이미 충분히 잘하고 있으니까 스스로를 믿고 가볍게 발걸음을 내디뎌 봐! ✨"),
-        ("수", "기회는 일어나는 것이 아니라 당신이 만드는 것이다.", "크리스 그로서 (Chris Grosser)",
-         "벌써 주의 중심인 수요일 아침이네! 일주일의 반환점을 도는 오늘, 중간 점검하듯 한숨 돌리면서 좋아하는 음악 한 곡 들어봐. 오늘 하루도 너답게 밝고 씩씩하게 보내길 진심으로 응원할게! 🌿"),
-        ("목", "성공은 매일 반복되는 작은 노력들의 합이다.", "로버트 콜리어 (Robert Collier)",
-         "목요일 아침이야! 주말이 손에 잡힐 듯 가까워졌네. 조금 지치고 피곤할 수도 있지만, 지금까지 달려온 네 자신을 꼭 칭찬해 줘. 가벼운 발걸음으로 기분 좋게 하루를 시작해 보자! 🎈"),
-        ("금", "가장 어두운 밤도 언젠가는 끝나고 해는 뜰 것이다.", "빅토르 위고 (Victor Hugo)",
-         "신나는 금요일 아침이 찾아왔어! 이번 한 주도 정말 수고 많았어. 오늘 계획한 일들 기분 좋게 마무리하고, 다가오는 주말을 설레는 마음으로 맞이해 봐. 오늘 하루도 힘차게 파이팅! 🔥"),
-        ("토", "인생은 쉼표가 있을 때 비로소 완성된다.", "작자 미상",
-         "꿀맛 같은 토요일 아침이네! 오늘은 알람 소리 대신 늦잠도 좀 자고, 오직 너만을 위한 온전한 휴식을 누려봐. 네가 좋아하는 맛있는 음식도 챙겨 먹고 행복한 주말 보내자! 🥐"),
-        ("일", "어제로부터 배우고, 오늘을 살며, 내일을 희망하라.", "알베르트 아인슈타인 (Albert Einstein)",
-         "여유로운 일요일 아침이네! 평일 동안 쌓였던 생각과 부담은 오늘만큼은 잠시 내려놓고, 온전히 네가 좋아하는 것들로 채워지는 편안한 쉼이 되었으면 좋겠어. 몸과 마음 든든하게 재충전하자! 🌿")
-    ]
-    weekday_idx = now.weekday()  # 0: 월요일 ~ 6: 일요일
-    _, quote_text, author, _ = random.choice(quotes)
-    cheer_msg = quotes[weekday_idx][3]
-    return quote_text, author, cheer_msg
+    cheers = ['새로운 한 주의 월요일 아침이 활짝 열렸네! 오늘 할 일들이 머릿속에 가득 차 있어도 조급해하지 말고, 일단 따뜻한 모닝커피 한 잔 마시면서 천천히 기지개부터 켜 봐. 네가 편안한 속도로 하나씩 짚어가다 보면 오늘도 분명 만족스러운 하루가 될 거야. 좋은 하루 보내자, 파이팅! ☕', '화요일 아침이야! 어제 월요일의 분주함은 잘 넘겼지? 오늘 하루는 어제보다 한결 여유로운 마음으로 하나씩 차근차근 풀어가 보자. 넌 이미 충분히 잘하고 있으니까 스스로를 믿고 가볍게 발걸음을 내디뎌 봐! ✨', '벌써 주의 중심인 수요일 아침이네! 일주일의 반환점을 도는 오늘, 중간 점검하듯 한숨 돌리면서 좋아하는 음악 한 곡 들어봐. 오늘 하루도 너답게 밝고 씩씩하게 보내길 진심으로 응원할게! 🌿', '목요일 아침이야! 주말이 손에 잡힐 듯 가까워졌네. 조금 지치고 피곤할 수도 있지만, 지금까지 달려온 네 자신을 꼭 칭찬해 줘. 가벼운 발걸음으로 기분 좋게 하루를 시작해 보자! 🎈', '신나는 금요일 아침이 찾아왔어! 이번 한 주도 정말 수고 많았어. 오늘 계획한 일들 기분 좋게 마무리하고, 다가오는 주말을 설레는 마음으로 맞이해 봐. 오늘 하루도 힘차게 파이팅! 🔥', '꿀맛 같은 토요일 아침이네! 오늘은 알람 소리 대신 늦잠도 좀 자고, 오직 너만을 위한 온전한 휴식을 누려봐. 네가 좋아하는 맛있는 음식도 챙겨 먹고 행복한 주말 보내자! 🥐', '여유로운 일요일 아침이네! 평일 동안 쌓였던 생각과 부담은 오늘만큼은 잠시 내려놓고, 온전히 네가 좋아하는 것들로 채워지는 편안한 쉼이 되었으면 좋겠어. 몸과 마음 든든하게 재충전하자! 🌿']
+    quote_text, author = fetch_random_quote()
+    return quote_text, author, cheers[now.weekday()]
 
 # ==========================================
 # 5. 브리핑 렌더링 및 이메일 자동 발송
@@ -354,8 +366,8 @@ def build_and_send_daily_briefing(recipient: str = None):
 
     <div class="section-title">오늘의 명언과 아침 응원</div>
     <div class="quote-box">
-      "{quote_text}"<br>
-      <span style="font-size:12px; font-weight:600; color:#78716c;">— {author}</span>
+      "{escape(quote_text)}"<br>
+      <span style="font-size:12px; font-weight:600; color:#78716c;">— {escape(author)}</span>
     </div>
 
     <div class="cheer-box">
