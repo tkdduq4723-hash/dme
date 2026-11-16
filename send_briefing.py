@@ -1,5 +1,6 @@
 import os
 import random
+import math
 import smtplib
 import json
 import urllib.parse
@@ -109,8 +110,11 @@ def fetch_live_market_data():
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
                 meta = data['chart']['result'][0]['meta']
-                price = meta.get('regularMarketPrice', 0.0)
-                prev = meta.get('chartPreviousClose', price)
+                price = meta.get('regularMarketPrice')
+                prev = meta.get('previousClose', meta.get('chartPreviousClose'))
+                if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value) or value <= 0 for value in (price, prev)):
+                    raise ValueError("Missing or invalid market price/previous close")
                 diff = price - prev
                 pct = (diff / prev * 100) if prev else 0.0
                 market_data[name] = {
@@ -120,22 +124,13 @@ def fetch_live_market_data():
                 }
         except Exception as e:
             print(f"[WARN] {name}({sym}) 증시 조회 실패: {e}")
-            # 폴백 기본값
-            market_data[name] = {"price": 0.0, "diff": 0.0, "pct": 0.0}
+            market_data[name] = None
             
-    # TQQQ 수치 정합성 확인
-    if market_data['TQQQ']['price'] == 0.0:
-        market_data['S&P 500'] = {"price": 7561.67, "diff": -30.73, "pct": -0.40}
-        market_data['나스닥 종합'] = {"price": 25136.27, "diff": -229.82, "pct": -0.91}
-        market_data['다우 존스'] = {"price": 52347.55, "diff": +50.46, "pct": +0.10}
-        market_data['러셀 2000'] = {"price": 2790.49, "diff": -8.57, "pct": -0.31}
-        market_data['나스닥 100'] = {"price": 27943.74, "diff": -345.45, "pct": -1.22}
-        market_data['필라델피아 반도체'] = {"price": 10146.32, "diff": -360.25, "pct": -3.43}
-        market_data['TQQQ'] = {"price": 57.68, "diff": -2.20, "pct": -3.67}
-        market_data['VIX'] = {"price": 19.30, "diff": 0.60, "pct": 3.21}
-        market_data['미 10년물 국채'] = {"price": 5.10, "diff": 0.08, "pct": 1.60}
-
     return market_data
+
+
+def market_value(data, field="price", spec=".2f", suffix=""):
+    return f"{data[field]:{spec}}{suffix}" if data is not None else "조회 실패"
 
 # ==========================================
 # 3. QuickChart 동적 그래프 생성
@@ -147,12 +142,15 @@ def generate_stock_chart_url(market_data):
     colors = []
     
     for k in chart_targets:
-        if k in market_data:
+        if market_data.get(k) is not None:
             pct = round(market_data[k]['pct'], 2)
             labels.append(k)
             data.append(pct)
             colors.append('#ef4444' if pct >= 0 else '#3b82f6')
             
+    if not labels:
+        return None
+
     chart_config = {
         'type': 'bar',
         'data': {
@@ -260,16 +258,20 @@ def build_and_send_daily_briefing(recipient: str = None):
     table_rows = ""
     for idx_name in ['S&P 500', '나스닥 종합', '다우 존스', '러셀 2000', '나스닥 100', '필라델피아 반도체']:
         d = market_data[idx_name]
+        if d is None:
+            table_rows += f"<tr><td><strong>{idx_name}</strong></td><td colspan='3'>조회 실패</td></tr>\n"
+            continue
         is_up = d['pct'] >= 0
         cls = "up" if is_up else "down"
         sign = "+" if is_up else ""
         table_rows += f"<tr><td><strong>{idx_name}</strong></td><td>{d['price']:,.2f}</td><td class='{cls}'>{sign}{d['diff']:,.2f}</td><td class='{cls}'>{sign}{d['pct']:.2f}%</td></tr>\n"
 
     tqqq = market_data['TQQQ']
-    tqqq_is_up = tqqq['pct'] >= 0
-    tqqq_cls = "up" if tqqq_is_up else "down"
-    tqqq_sign = "+" if tqqq_is_up else ""
-    ndx_pct = market_data['나스닥 100']['pct']
+    tqqq_summary = (f"${tqqq['price']:.2f} ({tqqq['diff']:+.2f}, {tqqq['pct']:+.2f}%)"
+                    if tqqq is not None else "조회 실패")
+    ndx_summary = market_value(market_data['나스닥 100'], 'pct', '+.2f', '%')
+    chart_html = (f'<img src="{chart_url}" alt="증시 등락률 그래프" />'
+                  if chart_url else '<p>증시 데이터 조회 실패로 그래프를 표시할 수 없습니다.</p>')
 
     html_content = f"""<!DOCTYPE html>
 <html lang="ko">
@@ -325,12 +327,12 @@ def build_and_send_daily_briefing(recipient: str = None):
       <a href="{item['link']}" target="_blank">🔗 {item['media']} 관련 보도 원문 보기</a>
     </div>"""
 
-    vix_val = market_data['VIX']['price']
-    tnx_val = market_data['미 10년물 국채']['price']
+    vix_val = market_value(market_data['VIX'])
+    tnx_val = market_value(market_data['미 10년물 국채'], suffix='%')
 
     html_content += f"""
     <div class="section-title">해외 증시</div>
-    <div class="sub-note">* 주요 지수와 내 보유 종목 TQQQ | 실시간 공인 시세 기준</div>
+    <div class="sub-note">* Yahoo Finance 최신 조회 시세 · 휴장 시 최근 거래일 수치 · 조회 실패 항목은 그래프에서 제외</div>
 
     <table>
       <thead>
@@ -347,20 +349,20 @@ def build_and_send_daily_briefing(recipient: str = None):
     </table>
 
     <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; margin-bottom:12px; font-size:12px; color:#475569;">
-      📌 <strong>추가 주요 거시 지표</strong>: <strong>미국 10년물 국채 금리</strong> {tnx_val:.2f}% | <strong>CBOE VIX(변동성/공포 지수)</strong> {vix_val:.2f}
+      📌 <strong>추가 주요 거시 지표</strong>: <strong>미국 10년물 국채 금리</strong> {tnx_val} | <strong>CBOE VIX(변동성/공포 지수)</strong> {vix_val}
     </div>
 
     <div class="chart-box">
       <div style="font-size:12px; font-weight:600; color:#475569; margin-bottom:8px;">📊 주요 지수 및 TQQQ 등락률 비교</div>
-      <img src="{chart_url}" alt="증시 등락률 그래프" />
+      {chart_html}
     </div>
 
     <div class="tqqq-box">
       <div style="font-weight:700; color:#1d4ed8; font-size:14px; margin-bottom:6px;">📈 내 보유 종목: ProShares UltraPro QQQ (TQQQ)</div>
       <div style="font-size:13px; color:#1e293b; line-height:1.6;">
-        • <strong>종가 수치</strong>: <strong>${tqqq['price']:.2f}</strong> (<span class="{tqqq_cls}">{tqqq_sign}${tqqq['diff']:.2f}, {tqqq_sign}{tqqq['pct']:.2f}%</span>)<br>
-        • <strong>나스닥100 연결 배경</strong>: TQQQ는 나스닥100 일간 변동폭을 3배 레버리지로 추종합니다. 기초지수인 나스닥100이 {ndx_pct:+.2f}% 변동함에 따라 이론치({ndx_pct*3:+.2f}%)와 일치하는 {tqqq['pct']:+.2f}% 등락률을 기록했습니다.<br>
-        • <strong>관전 포인트</strong>: 10년물 국채 금리({tnx_val:.2f}%) 및 변동성 지수(VIX {vix_val:.2f}) 동향과 나스닥100 지지선 방어 여부가 향후 반등의 핵심 분기점입니다.
+        • <strong>최신 조회 수치</strong>: {tqqq_summary}<br>
+        • <strong>나스닥100 등락률</strong>: {ndx_summary}<br>
+        • <strong>추가 지표</strong>: 10년물 국채 금리 {tnx_val} · VIX {vix_val}
       </div>
     </div>
 
@@ -389,13 +391,15 @@ def build_and_send_daily_briefing(recipient: str = None):
         plain_content += f"{i}. [{item['category']}] {item['title']}\n{item['desc']}\n링크: {item['link']}\n\n"
 
     plain_content += f"""2. 해외 증시
-- S&P 500: {market_data['S&P 500']['price']:.2f} ({market_data['S&P 500']['pct']:+.2f}%)
-- 나스닥 종합: {market_data['나스닥 종합']['price']:.2f} ({market_data['나스닥 종합']['pct']:+.2f}%)
-- 다우 존스: {market_data['다우 존스']['price']:.2f} ({market_data['다우 존스']['pct']:+.2f}%)
-- 러셀 2000: {market_data['러셀 2000']['price']:.2f} ({market_data['러셀 2000']['pct']:+.2f}%)
-- 나스닥 100: {market_data['나스닥 100']['price']:.2f} ({market_data['나스닥 100']['pct']:+.2f}%)
-- 필라델피아 반도체: {market_data['필라델피아 반도체']['price']:.2f} ({market_data['필라델피아 반도체']['pct']:+.2f}%)
-- TQQQ: ${tqqq['price']:.2f} ({tqqq['pct']:+.2f}%)
+- S&P 500: {market_value(market_data['S&P 500'])} ({market_value(market_data['S&P 500'], 'pct', '+.2f', '%')})
+- 나스닥 종합: {market_value(market_data['나스닥 종합'])} ({market_value(market_data['나스닥 종합'], 'pct', '+.2f', '%')})
+- 다우 존스: {market_value(market_data['다우 존스'])} ({market_value(market_data['다우 존스'], 'pct', '+.2f', '%')})
+- 러셀 2000: {market_value(market_data['러셀 2000'])} ({market_value(market_data['러셀 2000'], 'pct', '+.2f', '%')})
+- 나스닥 100: {market_value(market_data['나스닥 100'])} ({ndx_summary})
+- 필라델피아 반도체: {market_value(market_data['필라델피아 반도체'])} ({market_value(market_data['필라델피아 반도체'], 'pct', '+.2f', '%')})
+- TQQQ: {tqqq_summary}
+- 미국 10년물 국채 금리: {tnx_val}
+- VIX: {vix_val}
 
 3. 오늘의 명언과 아침 응원
 "{quote_text}" — {author}
