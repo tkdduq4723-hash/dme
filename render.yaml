@@ -1,0 +1,22 @@
+services:
+  - type: cron
+    name: dme-morning-briefing
+    runtime: python
+    repo: https://github.com/tkdduq4723-hash/dme
+    branch: main
+    plan: 0.5c-512mb
+    # Render schedules use UTC: 23:00 UTC = 08:00 Asia/Seoul.
+    schedule: "0 23 * * *"
+    buildCommand: python -m py_compile send_briefing.py cloud_send.py
+    startCommand: python cloud_send.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.12"
+      - key: TZ
+        value: Asia/Seoul
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASS
+        sync: false
+      - key: RECIPIENT_EMAIL
+        sync: false
